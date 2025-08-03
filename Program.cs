@@ -1,46 +1,74 @@
 ﻿using System;
-using System.Text.RegularExpressions;
-using System.Collections.Generic;
-using OpenQA.Selenium;
-using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.Support.UI;
+using System.Net.Http;
+using System.Threading.Tasks;
+using System.IO;
+using HtmlAgilityPack;
 
 class Program
 {
-    static void Main(string[] args)
+    static async Task Main()
     {
-        // 1) Set up headless Chrome
-        var options = new ChromeOptions();
-        options.AddArgument("--headless");  // Run Chrome without GUI
-        options.AddArgument("--disable-gpu");
-        using var driver = new ChromeDriver(options);
+        // Use the updated URL with current cid
+        var url = "https://apnt.app/zavgorodnyaya_olga2/times?cid=caaptlaf1cb05i0kbkk8dk37gh";
 
-        // 2) Go to the page
-        string url = "https://apnt.app/zavgorodnyaya_olga2/times?cid=7p7id3jc9ikqvbndupekbmlibi";
-        driver.Navigate().GoToUrl(url);
+        using var client = new HttpClient();
+        // Mimic browser headers
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+            "(KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36");
+        client.DefaultRequestHeaders.Accept.ParseAdd("text/html,application/xhtml+xml");
 
-        var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
-        wait.Until(d => d.FindElement(By.TagName("body")));
+        // Fetch HTML with error handling
+        HttpResponseMessage response;
+        string html;
+        try
+        {
+            response = await client.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+            html = await response.Content.ReadAsStringAsync();
 
-        // 3) Give time for JavaScript to render the calendar
-        System.Threading.Thread.Sleep(3000); // or wait for some element
+            // Save HTML for inspection
+            File.WriteAllText("debug.html", html);
+            Console.WriteLine("⚠️ HTML saved to debug.html for inspection");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"🚫 Request failed: {ex.Message}");
+            return;
+        }
 
-        // 4) Grab all visible text
-        string allText = driver.FindElement(By.TagName("body")).Text;
+        var doc = new HtmlDocument();
+        doc.LoadHtml(html);
 
-        // 5) Extract all date-time patterns from text
-        var regex = new Regex(@"\b\d{2}\.\d{2}\.\d{4}\s+\d{2}:\d{2}\b");
-        var matches = regex.Matches(allText);
+        // Verify HTML structure
+        Console.WriteLine("🔍 Verifying HTML structure...");
+        Console.WriteLine($"Document title: {doc.DocumentNode.SelectSingleNode("//title")?.InnerText.Trim() ?? "N/A"}");
+        Console.WriteLine($"Found time-slots container: {doc.DocumentNode.SelectSingleNode("//div[contains(@class,'times-container')]") != null}");
 
-        var dates = new HashSet<string>();
-        foreach (Match m in matches)
-            dates.Add(m.Value);
+        // Target ONLY available slots - updated selector
+        var nodes = doc.DocumentNode.SelectNodes(
+            "//button[contains(concat(' ', @class, ' '), ' time-slot ') and contains(concat(' ', @class, ' '), ' available ')]");
 
-        // 6) Display results
-        Console.WriteLine("📅 Available visible dates:");
-        foreach (var date in dates)
-            Console.WriteLine(" - " + date);
+        if (nodes == null || nodes.Count == 0)
+        {
+            Console.WriteLine("❌ No available slots found. Please check:");
+            Console.WriteLine($"1. URL validity: {url}");
+            Console.WriteLine($"2. HTML structure in debug.html");
+            Console.WriteLine($"3. Current availability on the live site");
 
-        driver.Quit();
+            // Check for common error patterns
+            var errorNode = doc.DocumentNode.SelectSingleNode("//div[contains(@class,'error')]");
+            if (errorNode != null)
+            {
+                Console.WriteLine($"⚠️ Error message found: {errorNode.InnerText.Trim()}");
+            }
+            return;
+        }
+
+        Console.WriteLine("✅ Available slots:");
+        foreach (var node in nodes)
+        {
+            Console.WriteLine($" - {node.InnerText.Trim()}");
+        }
     }
 }
